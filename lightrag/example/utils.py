@@ -52,7 +52,6 @@ def get_llm_client() -> "OpenAI":
         raise RuntimeError("openai package is not installed")
 
     api_key = os.getenv("DEEPSEEK_API_KEY")
-    api_key = 'sk-efa599ed81c9492580cb4849d5bad62f'#防止univcorn无法获取key，测试用
     if not api_key:
         raise RuntimeError("DEEPSEEK_API_KEY is not configured")
 

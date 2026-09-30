@@ -15,6 +15,7 @@ services:
       - /etcd
     volumes:
       - ./data/milvus/etcd:/etcd
+    restart: unless-stopped 
 
   milvus-minio:
     container_name: milvus-minio
@@ -28,6 +29,7 @@ services:
       - "9001:9001"
     volumes:
       - ./data/milvus/minio:/minio_data
+    restart: unless-stopped 
 
   milvus-standalone:
     container_name: milvus-standalone
@@ -49,3 +51,4 @@ services:
     depends_on:
       - milvus-etcd
       - milvus-minio
+    restart: unless-stopped
