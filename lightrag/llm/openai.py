@@ -1,8 +1,6 @@
 from ..utils import verbose_debug, VERBOSE_DEBUG
 import os
 import logging
-from time import perf_counter
-from lightrag.utils_chunk_translation import apply_chunk_translation_options
 
 from collections.abc import AsyncIterator
 
@@ -284,7 +282,6 @@ async def openai_complete_if_cache(
 
     # Extract client configuration options
     client_configs = kwargs.pop("openai_client_configs", {})
-    translation_trace = apply_chunk_translation_options(kwargs, base_url, use_azure)
 
     # Handle keyword extraction mode
     if keyword_extraction:
@@ -311,7 +308,7 @@ async def openai_complete_if_cache(
     logger.debug("===== Entering func of LLM =====")
     logger.debug(f"Model: {model}   Base URL: {base_url}")
     logger.debug(f"Client Configs: {client_configs}")
-    logger.debug("Additional model options supplied; values omitted")
+    logger.debug(f"Additional kwargs: {kwargs}")
     logger.debug(f"Num of history messages: {len(history_messages)}")
     verbose_debug(f"System prompt: {system_prompt}")
     verbose_debug(f"Query: {prompt}")
@@ -329,15 +326,6 @@ async def openai_complete_if_cache(
     # For Azure OpenAI, we must use the deployment name instead of the model name
     api_model = azure_deployment if use_azure and azure_deployment else model
 
-    api_started = perf_counter()
-    if translation_trace is not None:
-        logger.info(
-            "chunk_translation model_start request_id=%s attempt=%s queue_ms=%.2f thinking_disabled=%s",
-            translation_trace.request_id,
-            translation_trace.model_attempts,
-            translation_trace.queue_ms or 0.0,
-            translation_trace.thinking_disabled,
-        )
     try:
         # Don't use async with context manager, use client directly
         if "response_format" in kwargs:
@@ -366,27 +354,6 @@ async def openai_complete_if_cache(
         )
         await openai_async_client.close()  # Ensure client is closed
         raise
-
-    finally:
-        if translation_trace is not None:
-            elapsed = (perf_counter() - api_started) * 1000
-            translation_trace.api_ms += elapsed
-            logger.info(
-                "chunk_translation model_end request_id=%s attempt=%s api_ms=%.2f",
-                translation_trace.request_id,
-                translation_trace.model_attempts,
-                elapsed,
-            )
-
-    if translation_trace is not None:
-        usage = getattr(response, "usage", None)
-        translation_trace.completion_tokens += (
-            getattr(usage, "completion_tokens", 0) or 0
-        )
-        details = getattr(usage, "completion_tokens_details", None)
-        translation_trace.reasoning_tokens += (
-            getattr(details, "reasoning_tokens", 0) or 0
-        )
 
     if hasattr(response, "__aiter__"):
 

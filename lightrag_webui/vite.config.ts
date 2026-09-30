@@ -1,12 +1,11 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import path from 'path'
 import { webuiPrefix } from '@/lib/constants'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
-import { createDevProxy } from './dev-proxy'
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -35,6 +34,19 @@ export default defineConfig(({ mode }) => ({
     }
   },
   server: {
-    proxy: createDevProxy(loadEnv(mode, process.cwd(), 'VITE_'))
+    proxy: import.meta.env.VITE_API_PROXY === 'true' && import.meta.env.VITE_API_ENDPOINTS ?
+      Object.fromEntries(
+        import.meta.env.VITE_API_ENDPOINTS.split(',').map(endpoint => [
+          endpoint,
+          {
+            target: import.meta.env.VITE_BACKEND_PROXY_TARGET || import.meta.env.VITE_BACKEND_URL || 'http://localhost:9621',
+            changeOrigin: true,
+            rewrite: endpoint === '/api' ?
+              (path) => path :
+              endpoint === '/docs' || endpoint === '/redoc' || endpoint === '/openapi.json' || endpoint === '/static' ?
+                (path) => path : undefined
+          }
+        ])
+      ) : {}
   }
-}))
+})

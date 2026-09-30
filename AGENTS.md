@@ -46,9 +46,3 @@ LightRAG is an advanced Retrieval-Augmented Generation (RAG) framework designed 
 - Honor existing local modifications; never revert or discard user changes (especially via `git reset --hard`) unless explicitly asked.
 - Follow the planning tool guidance: skip it for trivial fixes, but provide multi-step plans for non-trivial work and keep the plan updated as steps progress.
 - Validate changes by running the relevant `ruff`/`pytest`/`bun test` commands whenever feasible, and describe any unrun checks with follow-up guidance.
-
-## 安全维护
-
-- 涉及认证、模型凭据、代理或部署修改时，先读取 [门户安全状态](../RAG_chats_agents/docs/security/STATUS.md)，并复核当前代码与实际运行状态，不能直接照搬历史报告。
-- 禁止提交或输出真实秘密；配置、日志、diff、构建产物和备份均须按秘密处理要求检查。
-- 完成相关修改后，同步更新当前安全状态和本次修复记录；分别记录代码、部署和验证状态。

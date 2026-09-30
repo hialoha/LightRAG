@@ -31,7 +31,6 @@ from typing import (
 )
 import numpy as np
 from dotenv import load_dotenv
-from lightrag.utils_chunk_translation import run_chunk_translation_llm
 
 from lightrag.constants import (
     DEFAULT_LOG_MAX_BYTES,
@@ -759,22 +758,12 @@ def priority_limit_async_func_call(
 
                         try:
                             # Execute function with timeout protection
-                            translation_trace = kwargs.pop(
-                                "_chunk_translation_trace", None
-                            )
-                            call = (
-                                run_chunk_translation_llm(
-                                    translation_trace, func, args, kwargs
-                                )
-                                if translation_trace is not None
-                                else func(*args, **kwargs)
-                            )
                             if max_execution_timeout is not None:
                                 result = await asyncio.wait_for(
-                                    call, timeout=max_execution_timeout
+                                    func(*args, **kwargs), timeout=max_execution_timeout
                                 )
                             else:
-                                result = await call
+                                result = await func(*args, **kwargs)
 
                             # Set result if future is still valid
                             if not task_state.future.done():

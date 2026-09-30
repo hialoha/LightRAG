@@ -4,8 +4,6 @@ import { errorMessage } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/state'
 import { navigationService } from '@/services/navigation'
-import { createApiUrls } from './urls'
-import { InvalidAuthResponseError, isAuthRequest } from './auth-errors'
 
 // Types
 export type LightragNodeType = {
@@ -453,10 +451,16 @@ export type LoginResponse = {
 export const InvalidApiKeyError = 'Invalid API Key'
 export const RequireApiKeError = 'API Key required'
 
-const { apiBaseUrl, root: resolveRootUrl, api: resolveApiUrl } = createApiUrls(
-  backendBaseUrl,
-  window.location.origin
-)
+const normalizedBackendBaseUrl = backendBaseUrl.replace(/\/+$/, '')
+const apiBaseUrl = normalizedBackendBaseUrl ? `${normalizedBackendBaseUrl}/api` : '/api'
+const resolveRootUrl = (path: string): string => {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return normalizedBackendBaseUrl ? `${normalizedBackendBaseUrl}${normalizedPath}` : normalizedPath
+}
+const resolveApiUrl = (path: string): string => {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${apiBaseUrl}${normalizedPath}`
+}
 
 // Axios instance
 const axiosInstance = axios.create({
@@ -591,12 +595,14 @@ axiosInstance.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    // Login and service checks need the original status and response details.
-    if (isAuthRequest(error.config?.url)) throw error
-
     if (error.response) {
       if (error.response?.status === 401) {
         const originalRequest = error.config;
+
+        // 1. For login API, throw error directly
+        if (originalRequest?.url?.includes('/login')) {
+          throw error;
+        }
 
         // 2. Prevent infinite retry
         if (originalRequest && (originalRequest as any)._retry) {
@@ -1068,16 +1074,60 @@ export const deleteDocuments = async (
 }
 
 export const getAuthStatus = async (): Promise<AuthStatusResponse> => {
-  const response = await axiosInstance.get(resolveRootUrl('/auth-status'), {
-    timeout: 5000,
-    headers: { Accept: 'application/json' }
-  })
-  const data = response.data
-  if (!data || typeof data !== 'object' || typeof data.auth_configured !== 'boolean'
-      || (!data.auth_configured && (typeof data.access_token !== 'string' || !data.access_token.trim()))) {
-    throw new InvalidAuthResponseError()
+  try {
+    // Add a timeout to the request to prevent hanging
+    const response = await axiosInstance.get(resolveRootUrl('/auth-status'), {
+      timeout: 5000, // 5 second timeout
+      headers: {
+        'Accept': 'application/json' // Explicitly request JSON
+      }
+    });
+
+    // Check if response is HTML (which indicates a redirect or wrong endpoint)
+    const contentType = response.headers['content-type'] || '';
+    if (contentType.includes('text/html')) {
+      console.warn('Received HTML response instead of JSON for auth-status endpoint');
+      return {
+        auth_configured: true,
+        auth_mode: 'enabled'
+      };
+    }
+
+    // Strict validation of the response data
+    if (response.data &&
+        typeof response.data === 'object' &&
+        'auth_configured' in response.data &&
+        typeof response.data.auth_configured === 'boolean') {
+
+      // For unconfigured auth, ensure we have an access token
+      if (!response.data.auth_configured) {
+        if (response.data.access_token && typeof response.data.access_token === 'string') {
+          return response.data;
+        } else {
+          console.warn('Auth not configured but no valid access token provided');
+        }
+      } else {
+        // For configured auth, just return the data
+        return response.data;
+      }
+    }
+
+    // If response data is invalid but we got a response, log it
+    console.warn('Received invalid auth status response:', response.data);
+
+    // Default to auth configured if response is invalid
+    return {
+      auth_configured: true,
+      auth_mode: 'enabled'
+    };
+  } catch (error) {
+    // If the request fails, assume authentication is configured
+    console.error('Failed to get auth status:', errorMessage(error));
+    return {
+      auth_configured: true,
+      auth_mode: 'enabled'
+    };
   }
-  return data
 }
 
 export const getPipelineStatus = async (): Promise<PipelineStatusResponse> => {
@@ -1099,15 +1149,11 @@ export const loginToServer = async (username: string, password: string): Promise
   formData.append('password', password);
 
   const response = await axiosInstance.post(resolveRootUrl('/login'), formData, {
-    timeout: 15000,
     headers: {
       'Content-Type': 'multipart/form-data'
     }
   });
 
-  if (typeof response.data?.access_token !== 'string' || !response.data.access_token.trim()) {
-    throw new InvalidAuthResponseError()
-  }
   return response.data;
 }
 

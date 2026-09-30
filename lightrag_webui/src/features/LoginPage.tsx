@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/state'
 import { useSettingsStore } from '@/stores/settings'
 import { loginToServer, getAuthStatus } from '@/api/lightrag'
-import { getLoginErrorKey } from '@/api/auth-errors'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
@@ -20,10 +19,11 @@ const LoginPage = () => {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [checkingAuth, setCheckingAuth] = useState(true)
-  const [errorKey, setErrorKey] = useState<string | null>(null)
-  const [serviceUnavailable, setServiceUnavailable] = useState(false)
-  const [authCheckAttempt, setAuthCheckAttempt] = useState(0)
   const authCheckRef = useRef(false); // Prevent duplicate calls in Vite dev mode
+
+  useEffect(() => {
+    console.log('LoginPage mounted')
+  }, []);
 
   // Check if authentication is configured, skip login if not
   useEffect(() => {
@@ -44,8 +44,6 @@ const LoginPage = () => {
 
         // Check auth status
         const status = await getAuthStatus()
-        setServiceUnavailable(false)
-        setErrorKey(null)
 
         // Set session flag for version check to avoid duplicate checks in App component
         if (status.core_version || status.api_version) {
@@ -66,8 +64,8 @@ const LoginPage = () => {
         setCheckingAuth(false);
 
       } catch (error) {
-        setErrorKey(getLoginErrorKey(error, true))
-        setServiceUnavailable(true)
+        console.error('Failed to check auth configuration:', error)
+        // Also set checkingAuth to false in case of error
         setCheckingAuth(false);
       }
       // Removed finally block as we're setting checkingAuth earlier
@@ -79,27 +77,23 @@ const LoginPage = () => {
     // Cleanup function to prevent state updates after unmount
     return () => {
     }
-  }, [isAuthenticated, login, navigate, authCheckAttempt])
+  }, [isAuthenticated, login, navigate])
 
   // Don't render anything while checking auth
   if (checkingAuth) {
-    return <div role="status" className="flex h-screen items-center justify-center">{t('login.checkingService')}</div>
+    return null
   }
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (loading || serviceUnavailable) return
-    setErrorKey(null)
     if (!username || !password) {
-      setErrorKey('login.errorEmptyFields')
+      toast.error(t('login.errorEmptyFields'))
       return
     }
 
-    let credentialsAccepted = false
     try {
       setLoading(true)
       const response = await loginToServer(username, password)
-      credentialsAccepted = true
 
       // Get previous username from localStorage
       const previousUsername = localStorage.getItem('LIGHTRAG-PREVIOUS-USER')
@@ -121,11 +115,12 @@ const LoginPage = () => {
 
       // Check authentication mode
       const isGuestMode = response.auth_mode === 'disabled'
+      login(response.access_token, isGuestMode, response.core_version, response.api_version, response.webui_title || null, response.webui_description || null)
+
       // Set session flag for version check
       if (response.core_version || response.api_version) {
         sessionStorage.setItem('VERSION_CHECKED_FROM_LOGIN', 'true');
       }
-      login(response.access_token, isGuestMode, response.core_version, response.api_version, response.webui_title || null, response.webui_description || null)
 
       if (isGuestMode) {
         // Show authentication disabled notification
@@ -137,7 +132,13 @@ const LoginPage = () => {
       // Navigate to home page after successful login
       navigate('/')
     } catch (error) {
-      setErrorKey(credentialsAccepted ? 'login.errorSession' : getLoginErrorKey(error))
+      console.error('Login failed...', error)
+      toast.error(t('login.errorInvalidCredentials'))
+
+      // Clear any existing auth state
+      useAuthStore.getState().logout()
+      // Clear local storage
+      localStorage.removeItem('LIGHTRAG-API-TOKEN')
     } finally {
       setLoading(false)
     }
@@ -165,34 +166,12 @@ const LoginPage = () => {
         </CardHeader>
         <CardContent className="px-8 pb-8">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {errorKey && (
-              <div id="login-error" role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                <p>{t(errorKey)}</p>
-                {serviceUnavailable && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="mt-3"
-                    onClick={() => {
-                      authCheckRef.current = false
-                      setCheckingAuth(true)
-                      setAuthCheckAttempt(attempt => attempt + 1)
-                    }}
-                  >
-                    {t('login.retryService')}
-                  </Button>
-                )}
-              </div>
-            )}
             <div className="flex items-center gap-4">
               <label htmlFor="username-input" className="text-sm font-medium w-16 shrink-0">
                 {t('login.username')}
               </label>
               <Input
                 id="username-input"
-                autoComplete="username"
-                aria-describedby={errorKey ? 'login-error' : undefined}
-                aria-invalid={errorKey === 'login.errorInvalidCredentials'}
                 placeholder={t('login.usernamePlaceholder')}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -207,9 +186,6 @@ const LoginPage = () => {
               <Input
                 id="password-input"
                 type="password"
-                autoComplete="current-password"
-                aria-describedby={errorKey ? 'login-error' : undefined}
-                aria-invalid={errorKey === 'login.errorInvalidCredentials'}
                 placeholder={t('login.passwordPlaceholder')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -220,7 +196,7 @@ const LoginPage = () => {
             <Button
               type="submit"
               className="w-full h-11 text-base font-medium mt-2"
-              disabled={loading || serviceUnavailable}
+              disabled={loading}
             >
               {loading ? t('login.loggingIn') : t('login.loginButton')}
             </Button>

@@ -16,9 +16,6 @@ import logging.config
 import sys
 import subprocess
 import shutil
-import json
-from time import perf_counter
-from lightrag.utils_chunk_translation import ChunkTranslationTrace
 from typing import Any, Literal
 import numpy as np
 import uvicorn
@@ -305,75 +302,40 @@ async def translate_chunk_to_cn(
     chunk_id: str,
 ) -> tuple[str, bool]:
     """Translate a stored chunk to Chinese and persist translated_cn if needed."""
-    trace = ChunkTranslationTrace(chunk_id, str(getattr(rag, "workspace", "")))
-    status = "failed"
-    error_type = None
-    logger.info("chunk_translation start %s", json.dumps(trace.metrics()))
-    try:
-        if not callable(getattr(rag, "llm_model_func", None)):
-            raise ValueError("LLM model function is not configured")
+    if not callable(getattr(rag, "llm_model_func", None)):
+        raise ValueError("LLM model function is not configured")
 
-        with trace.measure("lookup"):
-            chunk_data = await rag.text_chunks.get_by_id(chunk_id)
-        if not chunk_data or "content" not in chunk_data:
-            raise KeyError(f"Chunk '{chunk_id}' not found")
+    chunk_data = await rag.text_chunks.get_by_id(chunk_id)
+    if not chunk_data or "content" not in chunk_data:
+        raise KeyError(f"Chunk '{chunk_id}' not found")
 
-        existing_translation = chunk_data.get("translated_cn")
-        if isinstance(existing_translation, str) and existing_translation.strip():
-            trace.cached = True
-            trace.translated_chars = len(existing_translation)
-            status = "ok"
-            return existing_translation, True
+    existing_translation = chunk_data.get("translated_cn")
+    if isinstance(existing_translation, str) and existing_translation.strip():
+        return existing_translation, True
 
-        trace.stage = "validation"
-        content_type = str(chunk_data.get("content_type") or "").strip().lower()
-        if content_type == "image":
-            raise ValueError("Image chunks do not support translation")
+    content_type = str(chunk_data.get("content_type") or "").strip().lower()
+    if content_type == "image":
+        raise ValueError("Image chunks do not support translation")
 
-        source_content = str(chunk_data.get("content") or "").strip()
-        if not source_content:
-            raise ValueError("Chunk content is empty")
-        trace.source_chars = len(source_content)
-        trace.queued = perf_counter()
-        trace.stage = "queue"
-        logger.info(
-            "chunk_translation queued request_id=%s lookup_ms=%.2f source_chars=%s",
-            trace.request_id,
-            trace.lookup_ms,
-            trace.source_chars,
-        )
-        translated = await rag.llm_model_func(
-            source_content,
-            system_prompt=TRANSLATE_TO_CN_SYSTEM_PROMPT,
-            history_messages=[],
-            enable_cot=False,
-            _priority=3,
-            _chunk_translation_trace=trace,
-        )
-        trace.stage = "result"
-        translated_text = remove_think_tags(str(translated or "")).strip()
-        if not translated_text:
-            raise ValueError("Translation returned empty content")
-        trace.translated_chars = len(translated_text)
+    source_content = str(chunk_data.get("content") or "").strip()
+    if not source_content:
+        raise ValueError("Chunk content is empty")
 
-        chunk_data["translated_cn"] = translated_text
-        logger.info(
-            "chunk_translation save_start request_id=%s llm_ms=%.2f",
-            trace.request_id,
-            trace.llm_ms,
-        )
-        with trace.measure("save"):
-            await rag.text_chunks.upsert({chunk_id: chunk_data})
-        status = "ok"
-        return translated_text, False
-    except BaseException as exc:
-        error_type = type(exc).__name__
-        raise
-    finally:
-        logger.info(
-            "chunk_translation finish %s",
-            json.dumps({**trace.metrics(), "status": status, "error_type": error_type}),
-        )
+    translated = await rag.llm_model_func(
+        source_content,
+        system_prompt=TRANSLATE_TO_CN_SYSTEM_PROMPT,
+        history_messages=[],
+        enable_cot=False,
+        _priority=3,
+    )
+    translated_text = remove_think_tags(str(translated or "")).strip()
+    if not translated_text:
+        raise ValueError("Translation returned empty content")
+
+    chunk_data["translated_cn"] = translated_text
+    await rag.text_chunks.upsert({chunk_id: chunk_data})
+
+    return translated_text, False
 
 
 async def get_chunks_paginated(
@@ -2154,7 +2116,7 @@ def create_app(args):
         dependencies=[Depends(combined_auth)],
         response_model=TranslateChunkResponse,
         summary="Translate a stored chunk into Chinese",
-        description="Returns translated_cn for the given chunk. Reuses cached translation when available; otherwise generates and persists it. Citation translation disables thinking on official DeepSeek requests and logs stage timings.",
+        description="Returns translated_cn for the given chunk. Reuses cached translation when available; otherwise generates and persists it.",
     )
     async def translate_chunk(request: Request, payload: TranslateChunkRequest):
         workspace = resolve_workspace_or_raise(request, payload.workspace)

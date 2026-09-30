@@ -16,7 +16,3 @@ The following versions currently being supported with security updates.
 | ------- | ------------------ |
 | 1.2.x   | :x:                |
 | 1.3.x   | :white_check_mark: |
-
-## 本机 SINAP 部署状态
-
-本机认证、凭据和部署状态以[门户安全状态](../RAG_chats_agents/docs/security/STATUS.md)为入口；当前源码修复不等同于运行服务已更新。

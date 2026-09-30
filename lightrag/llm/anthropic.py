@@ -107,7 +107,7 @@ async def anthropic_complete_if_cache(
 
     logger.debug("===== Sending Query to Anthropic LLM =====")
     logger.debug(f"Model: {model}   Base URL: {base_url}")
-    logger.debug("Additional model options supplied; values omitted")
+    logger.debug(f"Additional kwargs: {kwargs}")
     verbose_debug(f"Query: {prompt}")
     verbose_debug(f"System prompt: {system_prompt}")
 

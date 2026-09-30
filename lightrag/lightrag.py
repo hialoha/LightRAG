@@ -739,7 +739,8 @@ class LightRAG:
         # Restore original EmbeddingFunc object (asdict converts it to dict)
         global_config["embedding_func"] = original_embedding_func
 
-        logger.debug("LightRAG initialized; configuration values omitted to protect credentials")
+        _print_config = ",\n  ".join([f"{k} = {v}" for k, v in global_config.items()])
+        logger.debug(f"LightRAG init with param:\n  {_print_config}\n")
 
         # Step 2: Apply priority wrapper decorator to EmbeddingFunc's inner func
         # Create a NEW EmbeddingFunc instance with the wrapped func to avoid mutating the caller's object
