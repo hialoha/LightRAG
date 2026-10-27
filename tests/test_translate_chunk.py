@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import types
 
@@ -196,7 +197,14 @@ def test_translate_chunk_generates_and_persists_translation():
     assert translated_cn == "这是中文翻译。"
     assert cached is False
     assert len(rag.llm_calls) == 1
-    assert rag.llm_calls[0]["prompt"] == "This is the source chunk."
+    prompt = json.loads(rag.llm_calls[0]["prompt"])
+    assert prompt == {
+        "user_query": "",
+        "ai_answer": "",
+        "context_prev": "",
+        "context_next": "",
+        "target_chunk": "This is the source chunk.",
+    }
     assert rag.text_chunks.upserts == [
         {
             "chunk-1": {
@@ -210,6 +218,41 @@ def test_translate_chunk_generates_and_persists_translation():
             }
         }
     ]
+
+
+@pytest.mark.offline
+def test_translate_chunk_uses_context_and_force_overwrites_cached_translation():
+    translate_chunk_to_cn = _load_translate_chunk_to_cn()
+    rag = _FakeRAG(
+        {
+            "content": "Target chunk.",
+            "translated_cn": "旧译文",
+            "tokens": 3,
+            "chunk_order_index": 1,
+            "full_doc_id": "doc-1",
+            "file_path": "doc.txt",
+        },
+        llm_response="新译文",
+    )
+
+    translated_cn, cached = asyncio.run(
+        translate_chunk_to_cn(
+            rag,
+            "chunk-1",
+            query="What is this?",
+            answer="前句。[1] 目标句。后句。",
+            cite_index="1",
+            force=True,
+        )
+    )
+
+    assert translated_cn == "新译文"
+    assert cached is False
+    prompt = json.loads(rag.llm_calls[0]["prompt"])
+    assert prompt["user_query"] == "What is this?"
+    assert prompt["ai_answer"] == "前句。[1] 目标句。后句。"
+    assert prompt["target_chunk"] == "Target chunk."
+    assert rag.text_chunks.upserts[0]["chunk-1"]["translated_cn"] == "新译文"
 
 
 @pytest.mark.offline

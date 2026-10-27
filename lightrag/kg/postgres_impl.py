@@ -1056,6 +1056,34 @@ class PostgreSQLDB:
                     e,
                 )
 
+    async def _ensure_doc_chunks_context_index(self):
+        """Ensure adjacent chunk lookups have a document/order index.
+
+        Existing indexes are inspected by definition so an equivalent index with
+        another name is reused and no redundant write path is introduced.
+        """
+        index_name = "idx_lightrag_doc_chunks_workspace_doc_order"
+        existing = await self.query(
+            """
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE tablename = 'lightrag_doc_chunks'
+            """,
+            multirows=True,
+        )
+        expected = "(workspace, full_doc_id, chunk_order_index)"
+        for row in existing or []:
+            index_def = str(row.get("indexdef") or "").lower().replace('"', "")
+            if expected in index_def:
+                return
+        if any(str(row.get("indexname") or "") == index_name for row in existing or []):
+            return
+        await self.execute(
+            f"CREATE INDEX {index_name} ON LIGHTRAG_DOC_CHUNKS "
+            "(workspace, full_doc_id, chunk_order_index)"
+        )
+        logger.info("Created neighboring-chunk context index %s", index_name)
+
     async def _migrate_text_chunks_add_translated_cn(self):
         """Add translated_cn column to LIGHTRAG_DOC_CHUNKS table if needed"""
         try:
@@ -1518,6 +1546,13 @@ class PostgreSQLDB:
         except Exception as e:
             logger.error(
                 f"PostgreSQL, Failed to migrate text chunks translated_cn field: {e}"
+            )
+
+        try:
+            await self._ensure_doc_chunks_context_index()
+        except Exception as e:
+            logger.error(
+                f"PostgreSQL, Failed to ensure neighboring chunk context index: {e}"
             )
 
         try:
