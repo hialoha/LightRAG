@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -39,6 +40,37 @@ def _escape_like_pattern(value: str) -> str:
         value.replace("\\", "\\\\")
         .replace("%", "\\%")
         .replace("_", "\\_")
+    )
+
+
+class ReportDocumentsRequest(BaseModel):
+    workspace: Optional[str] = None
+    report_number: str
+
+    @field_validator("report_number")
+    @classmethod
+    def normalize_report_number(cls, value: str) -> str:
+        normalized = re.sub(r"[\s\-/]+", "", value.upper())
+        if not re.fullmatch(r"ORNL(?:TM|CF|NSIC|NUREGTM)?\d{1,7}", normalized):
+            raise ValueError("Expected a complete ORNL report number")
+        return normalized
+
+
+async def _report_documents(rag: Any, payload: ReportDocumentsRequest) -> list[dict]:
+    storage = _resolve_chunk_storage(rag)
+    # Match the complete basename, never a numeric substring or another series.
+    sql = r"""
+        SELECT id AS doc_id, file_path, content_summary
+        FROM LIGHTRAG_DOC_STATUS
+        WHERE workspace = $1 AND status = 'processed'
+          AND regexp_replace(upper(regexp_replace(
+              regexp_replace(file_path, '^.*[/\\]', ''),
+              '\.[^.]+$', '')), '[[:space:]/-]+', '', 'g') = $2
+        ORDER BY updated_at DESC, id ASC
+        LIMIT 3
+    """
+    return await storage.db.query(
+        sql, [storage.workspace, payload.report_number], multirows=True
     )
 
 
@@ -984,6 +1016,11 @@ def create_agent_routes(
     )
     async def workspace_info_post(payload: WorkspaceInfoRequest):
         return await _workspace_info_response(rag.resolve_current())
+
+    @router.post("/report_documents", dependencies=[Depends(combined_auth)])
+    async def report_documents(payload: ReportDocumentsRequest):
+        documents = await _report_documents(rag.resolve_current(), payload)
+        return {"documents": documents, "count": len(documents)}
 
     @router.post(
         "/chunk_search",

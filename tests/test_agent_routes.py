@@ -166,6 +166,22 @@ def _build_test_client(rag) -> tuple[TestClient, _FakeDB | None]:
     return TestClient(app), db
 
 
+def test_report_documents_is_scoped_and_normalizes_complete_number():
+    db = _FakeDB([{"doc_id": "doc-one", "file_path": "ORNL--4865.pdf", "content_summary": "Title"}])
+    client, _ = _build_test_client(_FakeRAG(_FakeTextChunks(db)))
+    response = client.post("/agent/report_documents", json={"report_number": "ORNL--4865"})
+    assert response.status_code == 200
+    assert response.json()["documents"][0]["doc_id"] == "doc-one"
+    assert db.last_params == ["default", "ORNL4865"]
+    assert "workspace = $1 AND status = 'processed'" in db.last_sql
+    assert "file_path" in db.last_sql and "= $2" in db.last_sql
+    response = client.post("/agent/report_documents", json={"report_number": "ORNL-TM-4865"})
+    assert response.status_code == 200
+    assert db.last_params[1] == "ORNLTM4865"
+    for value in ["4865", "ORNL-4865'; SELECT 1", "ORNL-4865.pdf"]:
+        assert client.post("/agent/report_documents", json={"report_number": value}).status_code == 422
+
+
 def test_chunk_search_endpoint_returns_rows_and_builds_sql():
     client, db = _build_test_client(
         _FakeRAG(
