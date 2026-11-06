@@ -1,48 +1,31 @@
-# Repository Guidelines
+# LightRAG 维护规则（2026-11-06）
 
-LightRAG is an advanced Retrieval-Augmented Generation (RAG) framework designed to enhance information retrieval and generation through graph-based knowledge representation.
+## 日常工作
 
-## Project Structure & Module Organization
-- `lightrag/`: Core Python package with orchestrators (`lightrag/lightrag.py`), storage adapters in `kg/`, LLM bindings in `llm/`, and helpers such as `operate.py` and `utils_*.py`.
-- `lightrag-api/`: FastAPI service (`lightrag_server.py`) with routers under `routers/` and Gunicorn launcher `run_with_gunicorn.py`.
-- `lightrag_webui/`: React 19 + TypeScript client driven by Bun + Vite; UI components live in `src/`.
-- Tests live in `tests/` and root-level `test_*.py`. Working datasets stay in `inputs/`, `rag_storage/`, `temp/`; deployment collateral lives in `docs/`, `k8s-deploy/`, and `docker-compose.yml`.
+- 先看本仓库工作区差异并定位本次模块；保留无关修改，不擅自暂存、提交、回退或覆盖。命令使用明确的工作目录，搜索优先 rg。
+- 本文件是 Agent 维护规则的唯一入口；CLAUDE.md 只引用本文。README、开发指南及历史审查记录按主题查阅，不默认全文阅读，不因局部修改重新审计全部架构。
+- 同一任务中已读且未变化的规则和证据可以复用，不在每个小步骤重复读取。锁文件和依赖未变、安装可用时不重复安装或重新解析依赖。
+- 文档、注释和 Agent 规则修改只检查差异与引用，不运行应用构建、全量测试、模型推理或部署。
 
-## Build, Test, and Development Commands
-- `python -m venv .venv && source .venv/bin/activate`: set up the Python runtime.
-- `pip install -e .` / `pip install -e .[api]`: install the package and API extras in editable mode.
-- `lightrag-server` or `uvicorn lightrag.api.lightrag_server:app --reload`: start the API locally; ensure `.env` is present.
-- `python -m pytest tests` (offline markers apply by default) or `python -m pytest tests --run-integration` / `python test_graph_storage.py`: run the full suite, opt into integration coverage, or target an individual script.
-- `ruff check .`: lint Python sources before committing.
-- `bun install`, `bun run dev`, `bun run build`, `bun test`: manage the web UI workflow (Bun is mandatory).
+## 源码与重要契约
 
-## Coding Style & Naming Conventions
-- Backend code follow PEP 8 with four-space indentation, annotate functions, and reach for dataclasses when modelling state.
-- Use `lightrag.utils.logger` instead of `print`; respect logger configuration flags.
-- Extend storage or pipeline abstractions via `lightrag.base` and keep reusable helpers in the existing `utils_*.py`.
-- Python modules remain lowercase with underscores; React components use `PascalCase.tsx` and hooks-first patterns.
-- Front-end code should remain in TypeScript with two-space indentation, rely on functional React components with hooks, and follow Tailwind utility style.
+- 核心包 `lightrag/`；编排 `lightrag/lightrag.py`，抽取与查询 `operate.py`，存储接口 `base.py`，适配器 `kg/`，模型绑定 `llm/`。
+- API 在 `lightrag/api/`，入口 `lightrag_server.py`；本机启动编排在 `lightrag/run.py`，不是旧文档中的独立 lightrag-api 目录。
+- 前端 `lightrag_webui/` 使用 React/TypeScript、Bun/Vite；测试在 `tests/`，pytest 配置在 `pyproject.toml` 和 `tests/conftest.py`，不存在的 tests/pytest.ini 不能作为依据。
+- 遵守 initialize_storages/finalize_storages 生命周期及 workspace 隔离。查询与索引的嵌入模型、维度和配置必须一致；变更模型需评估并验证迁移，不自动清空生产向量、图谱或缓存。
+- 新增存储和模型绑定复用现有抽象，日志用项目 logger；代码沿用现有命名、异步模式、类型与国际化风格。
 
-## Testing Guidelines
-- Keep pytest additions close to the code you touch (`tests/` mirrors feature folders and there are root-level `test_*.py` helpers); functions must start with `test_`.
-- Follow `tests/pytest.ini`: markers include `offline`, `integration`, `requires_db`, and `requires_api`, and the suite runs with `-m "not integration"` by default—pass `--run-integration` (or set `LIGHTRAG_RUN_INTEGRATION=true`) when external services are available.
-- Use the custom CLI toggles from `tests/conftest.py`: `--keep-artifacts`/`LIGHTRAG_KEEP_ARTIFACTS=true`, `--stress-test`/`LIGHTRAG_STRESS_TEST=true`, and `--test-workers N`/`LIGHTRAG_TEST_WORKERS` to dial up workloads or preserve temp files during investigations.
-- Export other required `LIGHTRAG_*` environment variables before running integration or storage tests so adapters can reach configured backends.
-- For UI updates, pair changes with Vitest specs and run `bun test`.
+## 按影响范围验证
 
-## Commit & Pull Request Guidelines
-- Use concise, imperative commit subjects (e.g., `Fix lock key normalization`) and add body context only when necessary.
-- PRs should include a summary, operational impact, linked issues, and screenshots or API samples for user-facing work.
-- Verify `ruff check .`, `python -m pytest`, and affected Bun commands succeed before requesting review; note the runs in the PR text.
+- 后端优先用项目 `.venv/bin/python -m pytest -q tests/<相关测试文件>.py`，仅对改动文件运行项目 Ruff；不默认全仓 `ruff check .` 或全量 pytest。
+- 测试隔离目录、workspace、数据库和缓存；不加载生产连接执行有副作用的测试。涉及已运行服务时先确认解释器及实际加载目录，不以另一份 checkout 或系统 Python 代替。
+- integration 测试默认由 tests/conftest.py 跳过；只有本次确需、服务可用且授权明确时才启用 `--run-integration`，压力测试、真实建图、索引重建和付费模型调用同样按实际授权执行。
+- 前端使用现有 Bun 环境；依赖变化或缺失才 `bun install --frozen-lockfile`。发布构建 `bun run build -- --outDir <暂存绝对目录>`；局部功能仅选择相关 `bun test <测试路径>` 及目标页面，不强制每次新增测试或运行所有 UI 测试。
+- 响应式修改补相关窄屏，公共逻辑或存储协议变化再扩大回归。检查通过且没有新变化或明确疑点时不重复执行，不为普通修改追加基准评测。
 
-## Security & Configuration Tips
-- Copy `.env.example` and `config.ini.example`; never commit secrets or real connection strings.
-- Configure storage backends through `LIGHTRAG_*` variables and validate them with `docker-compose` services when needed.
-- Treat `lightrag.log*` as local artefacts; purge sensitive information before sharing logs or outputs.
+## 发布与记录
 
-## Automation & Agent Workflow
-- Use repo-relative `workdir` arguments for every shell command and prefer `rg`/`rg --files` for searches since they are faster under the CLI harness.
-- Default edits to ASCII, rely on `apply_patch` for single-file changes, and only add concise comments that aid comprehension of complex logic.
-- Honor existing local modifications; never revert or discard user changes (especially via `git reset --hard`) unless explicitly asked.
-- Follow the planning tool guidance: skip it for trivial fixes, but provide multi-step plans for non-trivial work and keep the plan updated as steps progress.
-- Validate changes by running the relevant `ruff`/`pytest`/`bun test` commands whenever feasible, and describe any unrun checks with follow-up guidance.
+- 涉及已部署行为的修改，在用户授权范围内完成必要构建、验证、部署及目标入口核验；用户要求只改代码时遵从。只操作受影响服务，静态发布不无故重启后端。
+- 隔离构建后发布，保留旧入口与旧资源或等价可用回退，不覆盖并发修改。一次任务仅留一份简短结果，安全边界或部署结构变化才更新相应专项文档，不复制到多份历史记录。
+- 不提交密钥、真实连接串、生产数据或敏感日志；不放宽身份/资源权限。真实数据和生产 SQLite 仅由相应服务身份访问，主平台/MinerU 生产 SQLite 仅由 jrz 访问；无权限时不绕过。
+- Git commit 信息使用中文；完成本次任务的提交后默认 `git push` 到当前分支的既定远端并核验成功，不 force push，不夹带无关修改。用户明确要求不提交或不推送时遵从；推送失败如实报告原因。

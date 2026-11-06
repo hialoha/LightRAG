@@ -1,5 +1,7 @@
 # uv.lock Update Guide
 
+仅在依赖或锁文件维护任务中查阅；普通代码或文档修改不重新安装、升级或解析依赖。日常工作按 [AGENTS.md](../AGENTS.md)，提交使用中文并默认推送。
+
 ## What is uv.lock?
 
 `uv.lock` is uv's lock file. It captures the exact version of every dependency, including transitive ones, much like:
@@ -61,14 +63,16 @@ Keeping `uv.lock` in version control guarantees that everyone installs the same 
 # Recommended: let uv handle both files
 uv add fastapi
 git add pyproject.toml uv.lock
-git commit -m "Add fastapi dependency"
+git commit -m "添加 fastapi 依赖"
+git push
 
 # Manual alternative
 # 1. Edit pyproject.toml
 # 2. Regenerate the lock file
 uv lock
 git add pyproject.toml uv.lock
-git commit -m "Add fastapi dependency"
+git commit -m "添加 fastapi 依赖"
+git push
 ```
 
 ### Scenario 2: Relax or tighten a version constraint
@@ -82,7 +86,8 @@ uv lock
 
 # 3. Commit both files
 git add pyproject.toml uv.lock
-git commit -m "Update openai to >=1.5.0"
+git commit -m "更新 openai 依赖约束"
+git push
 ```
 
 ### Scenario 3: Upgrade everything to the newest compatible versions
@@ -91,7 +96,8 @@ git commit -m "Update openai to >=1.5.0"
 uv lock --upgrade
 git diff uv.lock
 git add uv.lock
-git commit -m "Upgrade dependencies to latest compatible versions"
+git commit -m "升级到约束内的兼容依赖版本"
+git push
 ```
 
 ### Scenario 4: Teammate syncing the project
