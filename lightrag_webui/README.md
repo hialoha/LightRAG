@@ -2,6 +2,8 @@
 
 LightRAG WebUI is a React-based web interface for interacting with the LightRAG system. It provides a user-friendly interface for querying, managing, and exploring LightRAG's functionalities.
 
+日常维护见 [AGENTS.md](../AGENTS.md)，打包与隔离发布见 [FrontendBuildGuide.md](../docs/FrontendBuildGuide.md)。以下为首次安装步骤；依赖可用且锁文件未变时无需重装，不直接用默认构建目录覆盖在线服务。
+
 ## Installation
 
 1. **Install Bun:**

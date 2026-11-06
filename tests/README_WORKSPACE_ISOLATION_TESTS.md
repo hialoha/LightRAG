@@ -244,8 +244,7 @@ async def test_new_feature():
 ## Related Documentation
 
 - [Workspace Isolation Design Doc](../docs/LightRAG_concurrent_explain.md)
-- [Project Intelligence](.clinerules/01-basic.md)
-- [Memory Bank](../.memory-bank/)
+- [Maintenance and validation scope](../AGENTS.md)
 
 ## Test Coverage Matrix
 

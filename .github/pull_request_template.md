@@ -1,32 +1,15 @@
-<!--
-Thanks for contributing to LightRAG!
+<!-- 按 AGENTS.md 说明本次实际改动；无关项可删，不为填写模板另建记录。 -->
 
-Please ensure your pull request is ready for review before submitting.
+## 问题与结果
 
-About this template
+说明具体问题、修改后的行为，以及相关 issue（如有）。
 
-This template helps contributors provide a clear and concise description of their changes. Feel free to adjust it as needed.
--->
+## 验证
 
-## Description
+列出实际执行的相关检查及结果；未验证项说明原因。纯文档或注释修改检查差异和引用即可。
 
-[Briefly describe the changes made in this pull request.]
+仅在行为、边界或回归风险需要时补测试；仅在用户用法或外部契约变化时更新对应文档，不要求全仓检查或额外审查轮次。
 
-## Related Issues
+## 影响（如有）
 
-[Reference any related issues or tasks addressed by this pull request.]
-
-## Changes Made
-
-[List the specific changes made in this pull request.]
-
-## Checklist
-
-- [ ] Changes tested locally
-- [ ] Code reviewed
-- [ ] Documentation updated (if necessary)
-- [ ] Unit tests added (if applicable)
-
-## Additional Notes
-
-[Add any additional notes or context for the reviewer(s).]
+说明兼容性、部署或回退信息；无需重复描述改动。

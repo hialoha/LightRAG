@@ -1,5 +1,7 @@
 # Frontend Build Guide
 
+> 以下安装与打包命令用于独立开发环境或发布构建环境，不是每次改代码的必做步骤。日常维护遵守 [AGENTS.md](../AGENTS.md)：复用可用依赖；服务正在使用 `lightrag/api/webui/` 时，在 `lightrag_webui/` 执行 `bun run build -- --outDir <暂存绝对目录>`，验证后再发布，避免构建直接覆盖在线资源。
+
 ## Overview
 
 The LightRAG project includes a React-based WebUI frontend. This guide explains how frontend building works in different scenarios.
