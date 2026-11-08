@@ -1,4 +1,5 @@
 from __future__ import annotations
+from lightrag.source_quality import query_guard, filter_rows, cache_key, safe_history, blocked_id
 from functools import partial
 from pathlib import Path
 
@@ -3204,6 +3205,7 @@ async def extract_entities(
     return chunk_results
 
 
+@query_guard
 async def kg_query(
     query: str,
     knowledge_graph_inst: BaseGraphStorage,
@@ -3350,6 +3352,7 @@ async def kg_query(
         query_param.user_prompt or "",
         query_param.enable_rerank,
         (agent_context or {}).get("signature", ""),
+        *cache_key(getattr(text_chunks_db, "workspace", "")),
     )
 
     cached_result = await handle_cache(
@@ -3367,7 +3370,7 @@ async def kg_query(
             user_query,
             system_prompt=sys_prompt,
             history_messages=sanitize_history_messages_for_llm(
-                query_param.conversation_history
+                safe_history(getattr(text_chunks_db, "workspace", ""), query_param.conversation_history)
             ),
             enable_cot=True,
             stream=query_param.stream,
@@ -4778,6 +4781,12 @@ async def _build_query_context(
         chunks_vdb,
     )
 
+    quality_workspace = getattr(text_chunks_db, "workspace", "")
+    for key in ("final_entities", "final_relations", "vector_chunks"):
+        search_result[key] = filter_rows(quality_workspace, search_result.get(key, []))
+    search_result["chunk_tracking"] = {key: value for key, value in search_result.get("chunk_tracking", {}).items()
+                                       if not blocked_id(quality_workspace, key)}
+
     preserved_entities = [
         entity
         for entity in (agent_context or {}).get("entities", [])
@@ -4786,6 +4795,9 @@ async def _build_query_context(
     preserved_chunks = [
         chunk for chunk in (agent_context or {}).get("chunks", []) if isinstance(chunk, dict)
     ]
+
+    preserved_entities = filter_rows(quality_workspace, preserved_entities, require_provenance=True)
+    preserved_chunks = filter_rows(quality_workspace, preserved_chunks, require_provenance=True)
 
     if not search_result["final_entities"] and not search_result["final_relations"]:
         if query_param.mode != "mix" and not preserved_entities and not preserved_chunks:
@@ -4818,6 +4830,7 @@ async def _build_query_context(
         chunk_tracking=search_result["chunk_tracking"],
         query_embedding=search_result["query_embedding"],
     )
+    merged_chunks = filter_rows(quality_workspace, merged_chunks)
     if (
         not merged_chunks
         and not truncation_result["entities_context"]
@@ -5479,6 +5492,7 @@ async def naive_query(
 ) -> str | AsyncIterator[str]: ...
 
 
+@query_guard
 async def naive_query(
     query: str,
     chunks_vdb: BaseVectorStorage,
@@ -5528,7 +5542,8 @@ async def naive_query(
         return QueryResult(content=PROMPTS["fail_response"])
 
     chunks = await _get_vector_context(query, chunks_vdb, text_chunks_db, query_param, None)
-    chunks = chunks or []
+    quality_workspace = getattr(text_chunks_db, "workspace", "")
+    chunks = filter_rows(quality_workspace, chunks or [])
     preserved_entities = [
         entity
         for entity in (agent_context or {}).get("entities", [])
@@ -5537,6 +5552,9 @@ async def naive_query(
     preserved_chunks = [
         chunk for chunk in (agent_context or {}).get("chunks", []) if isinstance(chunk, dict)
     ]
+
+    preserved_entities = filter_rows(quality_workspace, preserved_entities, require_provenance=True)
+    preserved_chunks = filter_rows(quality_workspace, preserved_chunks, require_provenance=True)
 
     if (chunks is None or len(chunks) == 0) and not preserved_entities and not preserved_chunks:
         logger.info(
@@ -5704,6 +5722,7 @@ async def naive_query(
         query_param.user_prompt or "",
         query_param.enable_rerank,
         (agent_context or {}).get("signature", ""),
+        *cache_key(getattr(text_chunks_db, "workspace", "")),
     )
     cached_result = await handle_cache(
         hashing_kv, args_hash, user_query, query_param.mode, cache_type="query"
@@ -5719,7 +5738,7 @@ async def naive_query(
             user_query,
             system_prompt=sys_prompt,
             history_messages=sanitize_history_messages_for_llm(
-                query_param.conversation_history
+                safe_history(getattr(text_chunks_db, "workspace", ""), query_param.conversation_history)
             ),
             enable_cot=True,
             stream=query_param.stream,

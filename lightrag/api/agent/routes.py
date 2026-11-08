@@ -1,4 +1,5 @@
 """Structured agent APIs for database retrieval."""
+from lightrag.source_quality import agent_result_guard
 
 import asyncio
 import json
@@ -56,6 +57,7 @@ class ReportDocumentsRequest(BaseModel):
         return normalized
 
 
+@agent_result_guard
 async def _report_documents(rag: Any, payload: ReportDocumentsRequest) -> list[dict]:
     storage = _resolve_chunk_storage(rag)
     # Match the complete basename, never a numeric substring or another series.
@@ -652,6 +654,7 @@ async def _get_agent_submit_payload(
     }, storage.workspace
 
 
+@agent_result_guard
 async def _search_doc_chunks(rag: Any, payload: ChunkSearchRequest) -> list[dict[str, Any]]:
     text_chunks = _resolve_chunk_storage(rag)
     sql_lines = [
@@ -699,6 +702,7 @@ async def _search_doc_chunks(rag: Any, payload: ChunkSearchRequest) -> list[dict
     return records or []
 
 
+@agent_result_guard
 async def _get_chunk_full_context(
     rag: Any, payload: ChunkFullContextRequest
 ) -> list[dict[str, Any]]:
@@ -898,6 +902,7 @@ async def _search_graph_entities_neo4j(
     return records
 
 
+@agent_result_guard
 async def _search_graph_entities(
     rag: Any, payload: EntitySearchRequest
 ) -> list[dict[str, Any]]:

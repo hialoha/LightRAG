@@ -1,4 +1,5 @@
 from __future__ import annotations
+from lightrag.source_quality import row_blocked
 
 import asyncio
 import json
@@ -850,7 +851,7 @@ async def get_doc_qa_pairs_by_ids(
     ordered_rows: list[dict[str, Any]] = []
     for qa_id in qa_ids:
         row = rows_by_id.get(str(qa_id))
-        if not row:
+        if not row or row_blocked(workspace, row):
             continue
         metadata = row.get("metadata")
         if isinstance(metadata, str):

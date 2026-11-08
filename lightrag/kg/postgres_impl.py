@@ -1,3 +1,4 @@
+from lightrag.source_quality import blocked_id
 import asyncio
 import hashlib
 import json
@@ -2264,6 +2265,9 @@ class PGKVStorage(BaseKVStorage):
     ################ QUERY METHODS ################
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         """Get data by id."""
+        if ((is_namespace(self.namespace, NameSpace.KV_STORE_FULL_DOCS) and blocked_id(self.workspace, id, "document"))
+                or (is_namespace(self.namespace, NameSpace.KV_STORE_TEXT_CHUNKS) and blocked_id(self.workspace, id, "chunk"))):
+            return None
         sql = SQL_TEMPLATES["get_by_id_" + self.namespace]
         params = {"workspace": self.workspace, "id": id}
         response = await self.db.query(sql, list(params.values()))
@@ -2402,8 +2406,13 @@ class PGKVStorage(BaseKVStorage):
         if not ids:
             return []
 
+        query_ids = ids
+        if is_namespace(self.namespace, NameSpace.KV_STORE_FULL_DOCS) or is_namespace(self.namespace, NameSpace.KV_STORE_TEXT_CHUNKS):
+            query_ids = [identifier for identifier in ids if not blocked_id(self.workspace, identifier)]
+            if not query_ids:
+                return [None for _ in ids]
         sql = SQL_TEMPLATES["get_by_ids_" + self.namespace]
-        params = {"workspace": self.workspace, "ids": ids}
+        params = {"workspace": self.workspace, "ids": query_ids}
         results = await self.db.query(sql, list(params.values()), multirows=True)
 
         def _order_results(
@@ -4116,6 +4125,8 @@ class PGDocStatusStorage(DocStatusStorage):
 
         docs_by_status = {}
         for element in result:
+            if blocked_id(self.workspace, element["id"], "document"):
+                continue
             # Parse chunks_list JSON string back to list
             chunks_list = element.get("chunks_list", [])
             if isinstance(chunks_list, str):

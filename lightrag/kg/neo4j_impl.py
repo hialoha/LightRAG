@@ -1,3 +1,4 @@
+from lightrag.source_quality import graph_read_guard
 import os
 import re
 from dataclasses import dataclass
@@ -500,6 +501,7 @@ class Neo4JStorage(BaseGraphStorage):
                     await result.consume()  # Ensure results are consumed even on error
                 raise
 
+    @graph_read_guard
     @READ_RETRY
     async def get_node(self, node_id: str) -> dict[str, str] | None:
         """Get node by its label identifier, return only node properties
@@ -554,6 +556,7 @@ class Neo4JStorage(BaseGraphStorage):
                 )
                 raise
 
+    @graph_read_guard
     @READ_RETRY
     async def get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]:
         """
@@ -726,6 +729,7 @@ class Neo4JStorage(BaseGraphStorage):
             edge_degrees[(src, tgt)] = degrees.get(src, 0) + degrees.get(tgt, 0)
         return edge_degrees
 
+    @graph_read_guard
     @READ_RETRY
     async def get_edge(
         self, source_node_id: str, target_node_id: str
@@ -814,6 +818,7 @@ class Neo4JStorage(BaseGraphStorage):
             )
             raise
 
+    @graph_read_guard
     @READ_RETRY
     async def get_edges_batch(
         self, pairs: list[dict[str, str]]

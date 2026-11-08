@@ -1,3 +1,4 @@
+from lightrag.source_quality import filter_rows, blocked_id
 import asyncio
 import os
 from typing import Any, final
@@ -1104,7 +1105,7 @@ class MilvusVectorDBStorage(BaseVectorStorage):
                 "params": {"radius": self.cosine_better_than_threshold},
             },
         )
-        return [
+        return filter_rows(self.workspace, [
             {
                 **dp.get("entity", {}),
                 "id": dp["id"],
@@ -1112,7 +1113,7 @@ class MilvusVectorDBStorage(BaseVectorStorage):
                 "created_at": dp.get("entity", {}).get("created_at"),
             }
             for dp in results[0]
-        ]
+        ])
 
     async def query_by_doc_id(
         self,
@@ -1121,6 +1122,8 @@ class MilvusVectorDBStorage(BaseVectorStorage):
         top_k: int,
         query_embedding: list[float] = None,
     ) -> list[dict[str, Any]]:
+        if blocked_id(self.workspace, doc_id, "document"):
+            return []
         if not self.namespace.endswith("qa_pairs"):
             raise ValueError("query_by_doc_id is only supported for QA pair vectors")
 

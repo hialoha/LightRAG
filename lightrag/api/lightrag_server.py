@@ -1,6 +1,7 @@
 """
 LightRAG FastAPI Server
 """
+from lightrag.source_quality import public_status as source_quality_status
 
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -2365,6 +2366,7 @@ def create_app(args):
 
             return {
                 "status": "healthy",
+                "source_quality_quarantine": source_quality_status(),
                 "webui_available": webui_dev_enabled or webui_assets_exist,
                 "working_directory": str(args.working_dir),
                 "input_directory": str(args.input_dir),

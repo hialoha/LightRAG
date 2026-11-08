@@ -1,6 +1,7 @@
 """
 This module contains all query-related routes for the LightRAG API.
 """
+from lightrag.source_quality import query_guard
 
 import asyncio
 import json
@@ -1020,6 +1021,7 @@ def _normalize_agent_submit_ids(submit_payload: dict[str, Any]) -> tuple[list[st
     return entity_ids, chunk_ids
 
 
+@query_guard
 async def _build_agent_bundle_from_submit(
     rag: Any,
     *,
