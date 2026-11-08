@@ -26,6 +26,7 @@ from typing import (
     Union,
 )
 from lightrag.prompt import PROMPTS
+from lightrag.source_quality import deletion_guard
 from lightrag.exceptions import PipelineCancelledException
 from lightrag.constants import (
     DEFAULT_MAX_GLEANING,
@@ -4123,6 +4124,7 @@ class LightRAG:
         # Return the dictionary containing statuses only for the found document IDs
         return found_statuses
 
+    @deletion_guard
     async def adelete_by_doc_id(
         self, doc_id: str, delete_llm_cache: bool = False
     ) -> DeletionResult:

@@ -333,3 +333,55 @@ def test_kg_context_filters_before_truncation_and_after_chunk_merge(
         )
     )
     assert result.context == "SAFE_CONTEXT"
+
+
+def test_deletion_reads_do_not_disable_query_or_other_workspace_isolation(policy):
+    value = json.loads(policy.read_text())
+    value["workspaces"]["other"] = {"doc_ids": ["doc-bad"], "chunk_ids": ["chunk-bad"]}
+    policy.write_text(json.dumps(value))
+
+    @quality.query_guard
+    async def query():
+        assert quality.blocked_id("w", "doc-bad", "document")
+        assert quality.blocked_id("w", "chunk-bad", "chunk")
+
+    @quality.deletion_guard
+    async def remove(rag):
+        assert not quality.blocked_id("w", "doc-bad", "document")
+        assert not quality.blocked_id("w", "chunk-bad", "chunk")
+        assert quality.blocked_id("other", "chunk-bad", "chunk")
+        await query()
+        assert not quality.blocked_id("w", "chunk-bad", "chunk")
+
+    asyncio.run(remove(SimpleNamespace(workspace="w")))
+    assert quality.blocked_id("w", "chunk-bad", "chunk")
+
+
+def test_deletion_scope_is_restored_after_failure(policy):
+    @quality.deletion_guard
+    async def remove(rag):
+        assert not quality.blocked_id("w", "doc-bad", "document")
+        raise RuntimeError("fixture failure")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(remove(SimpleNamespace(workspace="w")))
+    assert quality.blocked_id("w", "doc-bad", "document")
+
+
+def test_parallel_query_remains_isolated_during_deletion(policy):
+    async def run():
+        entered, finish = asyncio.Event(), asyncio.Event()
+
+        @quality.deletion_guard
+        async def remove(rag):
+            entered.set()
+            await finish.wait()
+            assert not quality.blocked_id("w", "chunk-bad", "chunk")
+
+        task = asyncio.create_task(remove(SimpleNamespace(workspace="w")))
+        await entered.wait()
+        assert quality.blocked_id("w", "chunk-bad", "chunk")
+        finish.set()
+        await task
+
+    asyncio.run(run())

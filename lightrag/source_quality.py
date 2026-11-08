@@ -13,6 +13,7 @@ from contextvars import ContextVar
 from pathlib import Path
 
 _query_scope = ContextVar("source_quality_query", default=False)
+_deletion_workspace = ContextVar("source_quality_deletion_workspace", default=None)
 _cache_lock = threading.Lock()
 _cache = {}
 
@@ -73,6 +74,13 @@ def cache_key(workspace):
 
 
 def blocked_id(workspace, identifier, kind=None):
+    deletion_workspace = _deletion_workspace.get()
+    if (
+        deletion_workspace is not None
+        and deletion_workspace == workspace
+        and not _query_scope.get()
+    ):
+        return False
     policy = scope(workspace)
     if kind == "document":
         return identifier in policy["docs"]
@@ -135,6 +143,27 @@ def filter_rows(workspace, rows, *, require_provenance=False):
             and row["id"].startswith(("chunk-", "doc-"))
         )
     ]
+
+
+def deletion_guard(function):
+    """Let authenticated deletion rebuild dependencies without changing query isolation.
+
+    The scope is task-local, limited to the deleting RAG workspace, and never
+    overrides an explicit query scope. No quarantine registry is changed.
+    """
+
+    @functools.wraps(function)
+    async def guarded(rag, *args, **kwargs):
+        workspace = getattr(rag, "workspace", None)
+        if not isinstance(workspace, str):
+            raise ValueError("Document deletion requires an explicit workspace")
+        token = _deletion_workspace.set(workspace)
+        try:
+            return await function(rag, *args, **kwargs)
+        finally:
+            _deletion_workspace.reset(token)
+
+    return guarded
 
 
 def query_guard(function):
