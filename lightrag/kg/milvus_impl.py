@@ -1,5 +1,4 @@
 from lightrag.source_quality import filter_rows, blocked_id
-import asyncio
 import os
 from typing import Any, final
 from dataclasses import dataclass
@@ -1027,20 +1026,28 @@ class MilvusVectorDBStorage(BaseVectorStorage):
             for k, v in data.items()
         ]
         contents = self._build_embedding_inputs(data)
-        batches = [
-            contents[i : i + self._max_batch_size]
-            for i in range(0, len(contents), self._max_batch_size)
-        ]
-
-        embedding_tasks = [self.embedding_func(batch) for batch in batches]
-        embeddings_list = await asyncio.gather(*embedding_tasks)
-
-        embeddings = np.concatenate(embeddings_list)
-        for i, d in enumerate(list_data):
-            d["vector"] = embeddings[i]
-        results = self._client.upsert(
-            collection_name=self.final_namespace, data=list_data
-        )
+        # Flush each embedding batch instead of collecting an entire document.
+        # Large reports can exceed Milvus's RPC limit in a single request, and
+        # launching every embedding batch together increases GPU memory pressure.
+        results = None
+        for offset in range(0, len(contents), self._max_batch_size):
+            batch = contents[offset : offset + self._max_batch_size]
+            if any(isinstance(item, dict) and item.get("image") for item in batch):
+                # OCR images have widely different visual token counts. Even
+                # a small image batch can exhaust a local VLM's GPU memory.
+                embeddings = np.concatenate(
+                    [await self.embedding_func([item]) for item in batch]
+                )
+            else:
+                embeddings = await self.embedding_func(batch)
+            rows = list_data[offset : offset + len(batch)]
+            if len(embeddings) != len(rows):
+                raise ValueError("Embedding response count differs from input batch")
+            for row, vector in zip(rows, embeddings):
+                row["vector"] = vector
+            results = self._client.upsert(
+                collection_name=self.final_namespace, data=rows
+            )
         return results
 
     async def upsert_precomputed(self, data: dict[str, dict[str, Any]]) -> None:

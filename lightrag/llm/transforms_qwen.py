@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import os
 import re
 from io import BytesIO
@@ -160,12 +161,23 @@ def _select_output_format_and_mime(
 
 def _resize_pil_image(image: Image.Image) -> Image.Image:
     max_width, max_height = _MAX_IMAGE_SIZE
-    if image.width <= max_width and image.height <= max_height:
-        return image.copy()
-
     resampling_module = getattr(Image, "Resampling", Image)
     resized = image.copy()
     resized.thumbnail((max_width, max_height), resample=resampling_module.LANCZOS)
+    # Thin rules and equation images from OCR may exceed Qwen's aspect-ratio
+    # limit. Pad the model input without cropping or changing the source image.
+    max_ratio = 199
+    width = max(resized.width, math.ceil(resized.height / max_ratio))
+    height = max(resized.height, math.ceil(resized.width / max_ratio))
+    if (width, height) != resized.size:
+        canvas = Image.new("RGB", (width, height), "white")
+        foreground = resized.convert("RGBA")
+        canvas.paste(
+            foreground,
+            ((width - resized.width) // 2, (height - resized.height) // 2),
+            foreground,
+        )
+        return canvas
     return resized
 
 
