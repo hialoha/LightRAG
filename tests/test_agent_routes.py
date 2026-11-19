@@ -1,5 +1,7 @@
 import sys
 import types
+from unittest.mock import patch
+import pytest
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
@@ -22,11 +24,17 @@ ascii_colors_stub.ASCIIColors = _ASCIIColors
 sys.modules.setdefault("ascii_colors", ascii_colors_stub)
 
 
+@pytest.fixture(autouse=True)
+def isolated_source_quality(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIGHTRAG_QUALITY_QUARANTINE_FILE", str(tmp_path / "quality.json"))
+
+
 def _load_create_agent_routes():
     argv = sys.argv[:]
     try:
         sys.argv = [sys.argv[0]]
-        from lightrag.api.agent import create_agent_routes
+        with patch("dotenv.dotenv_values", return_value={}):
+            from lightrag.api.agent import create_agent_routes
     finally:
         sys.argv = argv
     return create_agent_routes
@@ -40,8 +48,10 @@ class _FakeDB:
         self.last_params = None
         self.last_multirows = None
         self.execute_calls = []
+        self.query_calls = []
 
     async def query(self, sql, params=None, multirows=False):
+        self.query_calls.append((sql, list(params) if params else params))
         self.last_sql = sql
         self.last_params = params
         self.last_multirows = multirows
@@ -742,3 +752,147 @@ def test_submit_uses_workspace_from_body_and_single_id_aliases():
         '["entity-x"]',
         '["chunk-9"]',
     ]
+
+
+def test_document_title_lookup_uses_owned_identity_not_body_mentions():
+    db = _FakeDB([])
+    client, _ = _build_test_client(_FakeRAG(_FakeTextChunks(db)))
+    result = client.post('/agent/document_candidates', json={'title': 'Target Paper'})
+    assert result.status_code == 200
+    assert result.json()['documents'] == []
+    assert db.last_params == ['default', 'Target Paper']
+    assert "metadata->>'title'" in db.last_sql
+    assert "IN ('title', 'text')" in db.last_sql
+    assert 'split_part' in db.last_sql
+    assert 'c.chunk_order_index <= 8' in db.last_sql
+    assert 'ILIKE' not in db.last_sql
+
+
+def test_document_opening_is_in_source_order_and_not_claimed_complete():
+    db = _FakeDB(query_results=[
+        [{'doc_id': 'target', 'file_path': 'target.pdf'}],
+        [{'chunk_id': 'first', 'doc_id': 'target', 'content': 'Cover'}],
+        [{'total_chunks': 150}],
+    ])
+    client, _ = _build_test_client(_FakeRAG(_FakeTextChunks(db)))
+    result = client.post('/agent/document_read', json={'doc_id': 'target', 'mode': 'opening'})
+    assert result.status_code == 200
+    assert result.json()['total_chunks'] == 150
+    assert result.json()['coverage'] == 'selected_excerpts'
+    assert result.json()['is_full_document'] is False
+    assert 'ORDER BY chunk_order_index ASC' in db.query_calls[1][0]
+    assert db.query_calls[1][1] == ['default', 'target', 12]
+
+
+def test_document_search_passes_doc_id_to_vector_recall():
+    class Vectors:
+        async def query_by_doc_id(self, query, doc_id, top_k):
+            assert (query, doc_id, top_k) == ('actual question', 'target', 24)
+            return [{'id': 'hit', 'full_doc_id': 'target'},
+                    {'id': 'wrong', 'full_doc_id': 'other'}]
+    db = _FakeDB(query_results=[
+        [{'doc_id': 'target'}],
+        [{'chunk_id': 'hit', 'doc_id': 'target', 'content': 'Body'}],
+        [{'total_chunks': 80}],
+    ])
+    rag = _FakeRAG(_FakeTextChunks(db))
+    rag.chunks_vdb = Vectors()
+    client, _ = _build_test_client(rag)
+    result = client.post('/agent/document_read', json={
+        'doc_id': 'target', 'mode': 'search', 'query': 'actual question'})
+    assert result.status_code == 200
+    assert result.json()['chunks'][0]['doc_id'] == 'target'
+    assert db.query_calls[1][1] == ['default', 'target', ['hit'], 12]
+
+
+def test_document_search_without_scoped_support_does_not_search_globally():
+    db = _FakeDB([{'doc_id': 'target'}])
+    client, _ = _build_test_client(_FakeRAG(_FakeTextChunks(db)))
+    assert client.post('/agent/document_read', json={
+        'doc_id': 'target', 'query': 'question'}).status_code == 501
+    assert client.post('/agent/document_read', json={'query': 'question'}).status_code == 422
+
+
+def test_document_not_found_stops_before_reading():
+    db = _FakeDB([])
+    client, _ = _build_test_client(_FakeRAG(_FakeTextChunks(db)))
+    assert client.post('/agent/document_read', json={
+        'doc_id': 'missing', 'mode': 'opening'}).status_code == 404
+
+
+def test_pg_chunk_vector_scope_is_applied_before_top_k():
+    import asyncio
+    from types import SimpleNamespace
+    with patch.dict(sys.modules, {"pipmaster": SimpleNamespace(is_installed=lambda _: True)}):
+        from lightrag.kg.postgres_impl import PGVectorStorage
+
+    db = _FakeDB([])
+    storage = SimpleNamespace(namespace='chunks', workspace='isolated',
+                              table_name='test_chunk_vectors', db=db,
+                              cosine_better_than_threshold=0.2)
+    asyncio.run(PGVectorStorage.query_by_doc_id(
+        storage, 'question', 'target', 8, query_embedding=[0.1, 0.2]))
+    assert db.last_params == ['isolated', 'target', 0.8, 8]
+    assert 'c.full_doc_id = $2' in db.last_sql
+    assert db.last_sql.index('c.full_doc_id = $2') < db.last_sql.index('LIMIT $4')
+    assert 'test_chunk_vectors' in db.last_sql
+
+
+def test_pg_qa_scoped_query_remains_supported():
+    import asyncio
+    from types import SimpleNamespace
+    with patch.dict(sys.modules, {"pipmaster": SimpleNamespace(is_installed=lambda _: True)}):
+        from lightrag.kg.postgres_impl import PGVectorStorage
+
+    db = _FakeDB([])
+    storage = SimpleNamespace(namespace='qa_pairs', workspace='isolated',
+                              table_name='test_qa_vectors', db=db,
+                              cosine_better_than_threshold=0.2)
+    asyncio.run(PGVectorStorage.query_by_doc_id(
+        storage, 'question', 'target', 8, query_embedding=[0.1, 0.2]))
+    assert 'q.doc_id = $2' in db.last_sql
+    assert db.last_params == ['isolated', 'target', 0.8, 8]
+
+
+def test_milvus_document_search_uses_membership_before_recall():
+    class Vectors:
+        async def query_by_ids(self, query, chunk_ids, top_k):
+            assert chunk_ids == ['owned-1', 'owned-2']
+            assert top_k == 24
+            return [{'id': 'owned-2'}, {'id': 'foreign'}]
+    db = _FakeDB(query_results=[
+        [{'doc_id': 'target'}],
+        [{'id': 'owned-1'}, {'id': 'owned-2'}],
+        [{'chunk_id': 'owned-2', 'doc_id': 'target', 'content': 'Source text'}],
+        [{'total_chunks': 2}],
+    ])
+    rag = _FakeRAG(_FakeTextChunks(db))
+    rag.chunks_vdb = Vectors()
+    client, _ = _build_test_client(rag)
+    result = client.post('/agent/document_read', json={'doc_id': 'target', 'query': 'question'})
+    assert result.status_code == 200
+    assert db.query_calls[1][1] == ['default', 'target']
+    assert db.query_calls[2][1] == ['default', 'target', ['owned-2'], 12]
+
+
+def test_milvus_id_filter_is_sent_to_search():
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    with patch.dict(sys.modules, {"pipmaster": SimpleNamespace(is_installed=lambda _: True)}):
+        from lightrag.kg.milvus_impl import MilvusVectorDBStorage
+    client = SimpleNamespace(search=Mock(return_value=[[{'id': 'owned', 'distance': 0.9}]]))
+    storage = SimpleNamespace(namespace='chunks', workspace='isolated',
+                              final_namespace='isolated_chunks', _client=client,
+                              cosine_better_than_threshold=0.2,
+                              _ensure_collection_loaded=lambda: None,
+                              _get_output_fields=lambda: ['created_at'])
+    ids = ['owned', 'id-with-"quote']
+    result = asyncio.run(MilvusVectorDBStorage.query_by_ids(
+        storage, 'question', ids, 8, query_embedding=[0.1, 0.2]))
+    args = client.search.call_args.kwargs
+    assert args['filter'] == 'id in ' + json.dumps(ids)
+    assert args['limit'] == 8
+    assert args['collection_name'] == 'isolated_chunks'
+    assert result[0]['id'] == 'owned'

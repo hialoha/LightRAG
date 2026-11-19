@@ -3639,10 +3639,14 @@ class PGVectorStorage(BaseVectorStorage):
         top_k: int,
         query_embedding: list[float] = None,
     ) -> list[dict[str, Any]]:
-        """Query QA question vectors within a single document."""
+        """Query vectors with the document restriction applied before top-k."""
 
-        if not is_namespace(self.namespace, NameSpace.VECTOR_STORE_QA_PAIRS):
-            raise ValueError("query_by_doc_id is only supported for QA pair vectors")
+        if is_namespace(self.namespace, NameSpace.VECTOR_STORE_CHUNKS):
+            template = "chunks_by_doc_id"
+        elif is_namespace(self.namespace, NameSpace.VECTOR_STORE_QA_PAIRS):
+            template = "qa_pairs_by_doc_id"
+        else:
+            raise ValueError("query_by_doc_id requires chunk or QA pair vectors")
 
         if query_embedding is not None:
             embedding = query_embedding
@@ -3651,7 +3655,7 @@ class PGVectorStorage(BaseVectorStorage):
             embedding = embeddings[0]
 
         embedding_string = ",".join(map(str, embedding))
-        sql = SQL_TEMPLATES["qa_pairs_by_doc_id"].format(
+        sql = SQL_TEMPLATES[template].format(
             embedding_string=embedding_string,
             table_name=self.table_name,
         )
@@ -6573,6 +6577,16 @@ SQL_TEMPLATES = {
                 AND q.content_vector <=> '[{embedding_string}]'::vector < $2
               ORDER BY q.content_vector <=> '[{embedding_string}]'::vector
               LIMIT $3;
+              """,
+    "chunks_by_doc_id": """
+              SELECT c.id, c.full_doc_id,
+                     c.content_vector <=> '[{embedding_string}]'::vector AS distance
+              FROM {table_name} c
+              WHERE c.workspace = $1
+                AND c.full_doc_id = $2
+                AND c.content_vector <=> '[{embedding_string}]'::vector < $3
+              ORDER BY c.content_vector <=> '[{embedding_string}]'::vector, c.id
+              LIMIT $4;
               """,
     "qa_pairs_by_doc_id": """
               SELECT q.qa_id,

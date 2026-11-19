@@ -7,7 +7,7 @@ import re
 import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
@@ -74,6 +74,132 @@ async def _report_documents(rag: Any, payload: ReportDocumentsRequest) -> list[d
     return await storage.db.query(
         sql, [storage.workspace, payload.report_number], multirows=True
     )
+
+
+class DocumentCandidatesRequest(BaseModel):
+    workspace: Optional[str] = None
+    title: str = Field(min_length=3, max_length=1000)
+
+    @field_validator("title")
+    @classmethod
+    def strip_title(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3 or not any(character.isalnum() for character in value):
+            raise ValueError("A document title is required")
+        return value
+
+
+class DocumentReadRequest(BaseModel):
+    workspace: Optional[str] = None
+    doc_id: str = Field(min_length=1)
+    mode: Literal["opening", "search", "overview"] = "search"
+    query: str = Field(default="", max_length=4000)
+    top_k: int = Field(default=12, ge=1, le=40)
+
+    @model_validator(mode="after")
+    def validate_search(self):
+        if not self.doc_id.strip():
+            raise ValueError("doc_id is required")
+        if self.mode == "search" and not self.query.strip():
+            raise ValueError("Document search requires a query")
+        return self
+
+
+@agent_result_guard
+async def _document_candidates(rag: Any, title: str) -> list[dict]:
+    """Match document-owned metadata, never mentions in another document's body."""
+    storage = _resolve_chunk_storage(rag)
+    return await storage.db.query(
+        r"""
+        SELECT d.id AS doc_id, d.file_path, d.metadata->>'title' AS title,
+               'document_metadata_or_opening_title' AS match_basis
+        FROM LIGHTRAG_DOC_STATUS d
+        WHERE d.workspace = $1 AND d.status = 'processed' AND (
+          regexp_replace(lower(COALESCE(d.metadata->>'title', '')),
+                         '[^[:alnum:]]', '', 'g') =
+          regexp_replace(lower($2), '[^[:alnum:]]', '', 'g')
+          OR regexp_replace(lower(regexp_replace(regexp_replace(
+               d.file_path, '^.*[/\\]', ''), '\.[^.]+$', '')),
+               '[^[:alnum:]]', '', 'g') =
+             regexp_replace(lower($2), '[^[:alnum:]]', '', 'g')
+          OR EXISTS (
+            SELECT 1 FROM LIGHTRAG_DOC_CHUNKS c
+            WHERE c.workspace = d.workspace AND c.full_doc_id = d.id
+              AND c.chunk_order_index <= 8
+              AND lower(COALESCE(c.content_type, 'text')) IN ('title', 'text')
+              AND (regexp_replace(lower(c.content), '[^[:alnum:]]', '', 'g') =
+                   regexp_replace(lower($2), '[^[:alnum:]]', '', 'g')
+                OR regexp_replace(lower(split_part(ltrim(c.content, E' \t\r\n'), E'\n', 1)),
+                                  '[^[:alnum:]]', '', 'g') =
+                   regexp_replace(lower($2), '[^[:alnum:]]', '', 'g'))))
+        ORDER BY d.id LIMIT 6
+        """,
+        [storage.workspace, title], multirows=True,
+    ) or []
+
+
+@agent_result_guard
+async def _document_identity(rag: Any, doc_id: str) -> list[dict]:
+    storage = _resolve_chunk_storage(rag)
+    return await storage.db.query(
+        "SELECT id AS doc_id, file_path, metadata->>'title' AS title "
+        "FROM LIGHTRAG_DOC_STATUS WHERE workspace = $1 AND id = $2 "
+        "AND status = 'processed'",
+        [storage.workspace, doc_id], multirows=True,
+    ) or []
+
+
+@agent_result_guard
+async def _read_document_chunks(rag: Any, payload: DocumentReadRequest) -> list[dict]:
+    storage = _resolve_chunk_storage(rag)
+    params: list[Any] = [storage.workspace, payload.doc_id]
+    # ref_text is an OCR bibliography block, not evidence of the cited work's body.
+    base = """
+        SELECT id AS chunk_id, full_doc_id AS doc_id, content, content_type,
+               chunk_order_index, page_id
+        FROM LIGHTRAG_DOC_CHUNKS
+        WHERE workspace = $1 AND full_doc_id = $2
+          AND COALESCE(content, '') <> ''
+          AND lower(COALESCE(content_type, 'text')) NOT IN ('image', 'ref_text', 'index')
+    """
+    if payload.mode == "search":
+        vectors = getattr(rag, "chunks_vdb", None)
+        query_scoped = getattr(vectors, "query_by_doc_id", None)
+        query_ids = getattr(vectors, "query_by_ids", None)
+        if callable(query_ids):
+            # Existing Milvus chunk collections intentionally store only IDs.
+            # Resolve document membership from PostgreSQL, then filter Milvus
+            # before top-k without migrating/rebuilding the live collection.
+            members = await storage.db.query(
+                "SELECT id FROM LIGHTRAG_DOC_CHUNKS WHERE workspace = $1 AND full_doc_id = $2",
+                params, multirows=True,
+            )
+            allowed = {row["id"] for row in members or []}
+            if not allowed:
+                return []
+            hits = await query_ids(payload.query, sorted(allowed), payload.top_k * 2)
+            ids = [hit["id"] for hit in hits or [] if hit.get("id") in allowed]
+        elif callable(query_scoped):
+            hits = await query_scoped(payload.query, payload.doc_id, payload.top_k * 2)
+            ids = [hit["id"] for hit in (hits or [])
+                   if hit.get("full_doc_id") == payload.doc_id and hit.get("id")]
+        else:
+            raise HTTPException(501, "Document-scoped vector search is unavailable")
+        if not ids:
+            return []
+        params.extend([ids, payload.top_k])
+        sql = base + " AND id = ANY($3::varchar[]) ORDER BY array_position($3::varchar[], id) LIMIT $4"
+    elif payload.mode == "overview":
+        # Read across the document, rather than claiming a few opening hits cover it.
+        params.append(payload.top_k)
+        sql = ("WITH source AS (" + base + "), ranked AS ("
+               "SELECT *, ntile($3::int) OVER (ORDER BY chunk_order_index NULLS LAST, chunk_id) AS bucket "
+               "FROM source) SELECT DISTINCT ON (bucket) * FROM ranked "
+               "ORDER BY bucket, chunk_order_index NULLS LAST, chunk_id")
+    else:
+        params.append(payload.top_k)
+        sql = base + " ORDER BY chunk_order_index ASC NULLS LAST, chunk_id ASC LIMIT $3"
+    return await storage.db.query(sql, params, multirows=True) or []
 
 
 class ChunkSearchRequest(BaseModel):
@@ -1026,6 +1152,31 @@ def create_agent_routes(
     async def report_documents(payload: ReportDocumentsRequest):
         documents = await _report_documents(rag.resolve_current(), payload)
         return {"documents": documents, "count": len(documents)}
+
+    @router.post("/document_candidates", dependencies=[Depends(combined_auth)])
+    async def document_candidates(payload: DocumentCandidatesRequest):
+        current = rag.resolve_current()
+        documents = await _document_candidates(current, payload.title)
+        return {"documents": documents, "count": len(documents),
+                "requires_identity_confirmation": True}
+
+    @router.post("/document_read", dependencies=[Depends(combined_auth)])
+    async def document_read(payload: DocumentReadRequest):
+        current = rag.resolve_current()
+        documents = await _document_identity(current, payload.doc_id)
+        if not documents:
+            raise HTTPException(404, "Target document is unavailable in this workspace")
+        chunks = await _read_document_chunks(current, payload)
+        storage = _resolve_chunk_storage(current)
+        counts = await storage.db.query(
+            "SELECT count(*) AS total_chunks FROM LIGHTRAG_DOC_CHUNKS "
+            "WHERE workspace = $1 AND full_doc_id = $2",
+            [storage.workspace, payload.doc_id], multirows=True,
+        )
+        total = int((counts or [{}])[0].get("total_chunks", 0))
+        return {"document": documents[0], "chunks": chunks, "count": len(chunks),
+                "total_chunks": total, "mode": payload.mode,
+                "coverage": "selected_excerpts", "is_full_document": False}
 
     @router.post(
         "/chunk_search",

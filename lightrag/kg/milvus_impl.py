@@ -1,5 +1,6 @@
 from lightrag.source_quality import filter_rows, blocked_id
 import os
+import json
 from typing import Any, final
 from dataclasses import dataclass
 import numpy as np
@@ -1120,6 +1121,33 @@ class MilvusVectorDBStorage(BaseVectorStorage):
                 "created_at": dp.get("entity", {}).get("created_at"),
             }
             for dp in results[0]
+        ])
+
+    async def query_by_ids(
+        self, query: str, chunk_ids: list[str], top_k: int,
+        query_embedding: list[float] = None,
+    ) -> list[dict[str, Any]]:
+        """Search only document-owned chunk IDs, applying the filter before top-k.
+
+        Membership is resolved by the caller from the authoritative chunk store;
+        existing lightweight Milvus collections need no schema/index migration.
+        """
+        if not self.namespace.endswith("chunks"):
+            raise ValueError("query_by_ids requires chunk vectors")
+        if not chunk_ids:
+            return []
+        self._ensure_collection_loaded()
+        embedding = ([query_embedding] if query_embedding is not None
+                     else await self.embedding_func([query], _priority=5))
+        results = self._client.search(
+            collection_name=self.final_namespace, data=embedding, limit=top_k,
+            output_fields=self._get_output_fields(),
+            filter="id in " + json.dumps(chunk_ids),
+            search_params={"metric_type": "COSINE",
+                           "params": {"radius": self.cosine_better_than_threshold}},
+        )
+        return filter_rows(self.workspace, [
+            {"id": hit["id"], "distance": hit["distance"]} for hit in results[0]
         ])
 
     async def query_by_doc_id(
