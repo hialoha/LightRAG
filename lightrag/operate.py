@@ -3743,8 +3743,8 @@ async def _get_vector_context(
         return valid_chunks
 
     except Exception as e:
-        logger.error(f"Error in _get_vector_context: {e}")
-        return []
+        logger.error("Vector retrieval failed (%s)", type(e).__name__)
+        raise RuntimeError("Vector retrieval service failed") from e
 
 
 async def _perform_kg_search(

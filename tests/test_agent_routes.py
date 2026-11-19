@@ -408,9 +408,9 @@ def test_chunk_full_context_returns_neighbor_rows_and_builds_sql():
             _FakeTextChunks(
                 _FakeDB(
                     [
-                        {"chunk_id": "chunk-4", "content": "chunk 4"},
-                        {"chunk_id": "chunk-5", "content": "chunk 5"},
-                        {"chunk_id": "chunk-6", "content": "chunk 6"},
+                        {"chunk_id": "chunk-4", "content": "chunk 4", "full_doc_id": "doc-a", "segment_order_index": 4, "chunk_order_index": 4, "page_id": 2, "content_type": "text"},
+                        {"chunk_id": "chunk-5", "content": "chunk 5", "full_doc_id": "doc-a", "segment_order_index": 5, "chunk_order_index": 5, "page_id": 2, "content_type": "text"},
+                        {"chunk_id": "chunk-6", "content": "chunk 6", "full_doc_id": "doc-a", "segment_order_index": 6, "chunk_order_index": 6, "page_id": 2, "content_type": "text"},
                     ]
                 )
             )
@@ -428,9 +428,9 @@ def test_chunk_full_context_returns_neighbor_rows_and_builds_sql():
     assert response.status_code == 200
     assert response.json() == {
         "chunks": [
-            {"chunk_id": "chunk-4", "content": "chunk 4"},
-            {"chunk_id": "chunk-5", "content": "chunk 5"},
-            {"chunk_id": "chunk-6", "content": "chunk 6"},
+            {"chunk_id": "chunk-4", "content": "chunk 4", "full_doc_id": "doc-a", "segment_order_index": 4, "chunk_order_index": 4, "page_id": 2, "content_type": "text"},
+            {"chunk_id": "chunk-5", "content": "chunk 5", "full_doc_id": "doc-a", "segment_order_index": 5, "chunk_order_index": 5, "page_id": 2, "content_type": "text"},
+            {"chunk_id": "chunk-6", "content": "chunk 6", "full_doc_id": "doc-a", "segment_order_index": 6, "chunk_order_index": 6, "page_id": 2, "content_type": "text"},
         ],
         "count": 3,
     }

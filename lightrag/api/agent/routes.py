@@ -331,6 +331,11 @@ class ChunkFullContextRequest(BaseModel):
 
 
 class ChunkFullContextResult(BaseModel):
+    full_doc_id: str = Field(description="Source document identity, required for scope validation")
+    segment_order_index: int | None = None
+    chunk_order_index: int | None = None
+    page_id: int | None = None
+    content_type: str | None = None
     chunk_id: str = Field(description="Chunk identifier")
     content: str = Field(
         description="Stored chunk content. Callers should treat this as the canonical text payload for context stitching."
@@ -846,6 +851,7 @@ async def _get_chunk_full_context(
     )
     SELECT
         c.id AS chunk_id,
+        c.full_doc_id, c.segment_order_index, c.chunk_order_index, c.page_id, c.content_type,
         COALESCE(c.content, '') AS content
     FROM LIGHTRAG_DOC_CHUNKS c
     JOIN target_chunk t
@@ -1229,7 +1235,7 @@ def create_agent_routes(
             "For example, if the target chunk belongs to doc A and has segment_order_index=2 with "
             "neighb=3, the effective range is [-1, 5], and the actual returned chunk orders are "
             "[0, 1, 2, 3, 4, 5] because negative indexes do not exist. "
-            "Successful responses return a minimal payload shape: chunks[].chunk_id, "
+            "Successful responses include source identity and stored positions: chunks[].full_doc_id, chunks[].chunk_id, "
             "chunks[].content, and count. Callers should not assume a fixed number of chunks."
         ),
     )
