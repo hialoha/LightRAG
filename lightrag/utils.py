@@ -3485,6 +3485,9 @@ def convert_to_user_format(
             "chunk_id": chunk.get("chunk_id", ""),
             "full_doc_id": chunk.get("full_doc_id"),
         }
+        for key in ("title", "filename", "chunk_order_index", "segment_order_index", "truncated", "coverage"):
+            if key in chunk:
+                chunk_data[key] = chunk[key]
         if chunk.get("content_type") is not None:
             chunk_data["content_type"] = chunk.get("content_type")
         if chunk.get("page_id") is not None:

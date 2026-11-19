@@ -644,6 +644,7 @@ def _format_query_data_for_agent(response: Dict[str, Any]) -> Dict[str, Any]:
                 "full_doc_id": item.get("full_doc_id"),
                 "image_text": resolved_image_text,
                 "content_type": item.get("content_type"),
+                **{key: item[key] for key in ("title", "filename", "file_path", "page_id", "chunk_order_index", "segment_order_index", "truncated", "coverage") if key in item},
             }
         )
 
