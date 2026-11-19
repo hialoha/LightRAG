@@ -3696,12 +3696,13 @@ async def _get_vector_context(
     """
     try:
         # Use chunk_top_k if specified, otherwise fall back to top_k
-        search_top_k = query_param.chunk_top_k or query_param.top_k
+        search_top_k = query_param.candidate_top_k or query_param.chunk_top_k or query_param.top_k
         cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
         results = await chunks_vdb.query(
             query, top_k=search_top_k, query_embedding=query_embedding
         )
+        query_param.retrieval_stats["vector_candidates"] = len(results or [])
         if not results:
             logger.info(
                 f"Naive query: 0 chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"

@@ -3664,27 +3664,9 @@ class LightRAG:
         )
 
         # Create a copy of param to avoid modifying the original
-        data_param = QueryParam(
-            mode=effective_param.mode,
-            only_need_context=True,  # Skip LLM generation, only get context and data
-            only_need_prompt=False,
-            response_type=effective_param.response_type,
-            stream=False,  # Data retrieval doesn't need streaming
-            top_k=effective_param.top_k,
-            chunk_top_k=effective_param.chunk_top_k,
-            max_entity_tokens=effective_param.max_entity_tokens,
-            max_relation_tokens=effective_param.max_relation_tokens,
-            max_total_tokens=effective_param.max_total_tokens,
-            hl_keywords=effective_param.hl_keywords,
-            ll_keywords=effective_param.ll_keywords,
-            conversation_history=effective_param.conversation_history,
-            history_turns=effective_param.history_turns,
-            model_func=effective_param.model_func,
-            user_prompt=effective_param.user_prompt,
-            enable_rerank=effective_param.enable_rerank,
-            include_references=effective_param.include_references,
-            query_ref=effective_param.query_ref,
-        )
+        # Preserve every retrieval parameter when switching to data-only mode.
+        # In particular, dropping candidate_top_k silently restores the old pool.
+        data_param = replace(effective_param, only_need_context=True, only_need_prompt=False, stream=False)
 
         query_result = None
 

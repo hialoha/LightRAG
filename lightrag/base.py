@@ -134,6 +134,10 @@ class QueryParam:
     top_k: int = int(os.getenv("TOP_K", str(DEFAULT_TOP_K)))
     """Number of top items to retrieve. Represents entities in 'local' mode and relationships in 'global' mode."""
 
+    retrieval_stats: dict = field(default_factory=dict, repr=False)
+    candidate_top_k: int | None = None
+    """Optional vector candidate pool size before reranking; legacy behavior when unset."""
+
     chunk_top_k: int = int(os.getenv("CHUNK_TOP_K", str(DEFAULT_CHUNK_TOP_K)))
     """Number of text chunks to retrieve initially from vector search and keep after reranking.
     If None, defaults to top_k value.

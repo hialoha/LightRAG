@@ -15,7 +15,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator, model_vali
 from lightrag.base import QueryParam
 from lightrag.constants import GRAPH_FIELD_SEP
 from lightrag.namespace import NameSpace, is_namespace
-from lightrag.utils import logger
+from lightrag.utils import logger, process_chunks_unified
 
 from ..utils_api import (
     WorkspaceObjectProxy,
@@ -95,6 +95,8 @@ class DocumentReadRequest(BaseModel):
     mode: Literal["opening", "search", "overview"] = "search"
     query: str = Field(default="", max_length=4000)
     top_k: int = Field(default=12, ge=1, le=40)
+    candidate_top_k: int = Field(default=40, ge=1, le=100)
+    max_total_tokens: int = Field(default=10000, ge=256, le=20000)
 
     @model_validator(mode="after")
     def validate_search(self):
@@ -139,6 +141,32 @@ async def _document_candidates(rag: Any, title: str) -> list[dict]:
 
 
 @agent_result_guard
+async def _title_variant_candidates(rag: Any, title: str) -> list[dict]:
+    # Only title-owned fields/first opening titles, never bibliography/body matches.
+    terms = list(dict.fromkeys(w for w in re.findall(r"[a-z0-9]+", title.casefold())
+                               if len(w) >= 3 and w not in {"the", "and", "for", "with", "from"}))[:10]
+    if len(terms) < 3:
+        return []
+    storage = _resolve_chunk_storage(rag)
+    return await storage.db.query(
+        """
+        SELECT d.id AS doc_id, d.file_path, d.metadata->>'title' AS title,
+               'title_variant_requires_confirmation' AS match_basis
+        FROM LIGHTRAG_DOC_STATUS d
+        WHERE d.workspace=$1 AND d.status='processed' AND (
+          (SELECT count(*) FROM unnest($2::text[]) term WHERE
+            lower(COALESCE(d.metadata->>'title','')) LIKE '%' || term || '%') >= $3
+          OR EXISTS (SELECT 1 FROM LIGHTRAG_DOC_CHUNKS c
+            WHERE c.workspace=d.workspace AND c.full_doc_id=d.id AND c.chunk_order_index<=8
+              AND lower(COALESCE(c.content_type,''))='title'
+              AND (SELECT count(*) FROM unnest($2::text[]) term WHERE
+                   lower(c.content) LIKE '%' || term || '%') >= $3))
+        ORDER BY d.id LIMIT 6
+        """, [storage.workspace, terms, max(3, (len(terms)*4+4)//5)], multirows=True,
+    ) or []
+
+
+@agent_result_guard
 async def _document_identity(rag: Any, doc_id: str) -> list[dict]:
     storage = _resolve_chunk_storage(rag)
     return await storage.db.query(
@@ -177,17 +205,17 @@ async def _read_document_chunks(rag: Any, payload: DocumentReadRequest) -> list[
             allowed = {row["id"] for row in members or []}
             if not allowed:
                 return []
-            hits = await query_ids(payload.query, sorted(allowed), payload.top_k * 2)
+            hits = await query_ids(payload.query, sorted(allowed), max(payload.candidate_top_k, payload.top_k))
             ids = [hit["id"] for hit in hits or [] if hit.get("id") in allowed]
         elif callable(query_scoped):
-            hits = await query_scoped(payload.query, payload.doc_id, payload.top_k * 2)
+            hits = await query_scoped(payload.query, payload.doc_id, max(payload.candidate_top_k, payload.top_k))
             ids = [hit["id"] for hit in (hits or [])
                    if hit.get("full_doc_id") == payload.doc_id and hit.get("id")]
         else:
             raise HTTPException(501, "Document-scoped vector search is unavailable")
         if not ids:
             return []
-        params.extend([ids, payload.top_k])
+        params.extend([ids, max(payload.candidate_top_k, payload.top_k)])
         sql = base + " AND id = ANY($3::varchar[]) ORDER BY array_position($3::varchar[], id) LIMIT $4"
     elif payload.mode == "overview":
         # Read across the document, rather than claiming a few opening hits cover it.
@@ -1163,6 +1191,8 @@ def create_agent_routes(
     async def document_candidates(payload: DocumentCandidatesRequest):
         current = rag.resolve_current()
         documents = await _document_candidates(current, payload.title)
+        if not documents:
+            documents = await _title_variant_candidates(current, payload.title)
         return {"documents": documents, "count": len(documents),
                 "requires_identity_confirmation": True}
 
@@ -1173,6 +1203,16 @@ def create_agent_routes(
         if not documents:
             raise HTTPException(404, "Target document is unavailable in this workspace")
         chunks = await _read_document_chunks(current, payload)
+        before = len(chunks)
+        if payload.mode == "search":
+            chunks = await process_chunks_unified(
+                payload.query, chunks,
+                QueryParam(mode="naive", chunk_top_k=payload.top_k, max_total_tokens=payload.max_total_tokens, enable_rerank=True),
+                {"tokenizer":getattr(current, "tokenizer", None),
+                 "rerank_model_func":getattr(current, "rerank_model_func", None),
+                 "min_rerank_score":getattr(current, "min_rerank_score", 0.5)},
+                source_type="document",
+            )
         storage = _resolve_chunk_storage(current)
         counts = await storage.db.query(
             "SELECT count(*) AS total_chunks FROM LIGHTRAG_DOC_CHUNKS "
@@ -1182,6 +1222,9 @@ def create_agent_routes(
         total = int((counts or [{}])[0].get("total_chunks", 0))
         return {"document": documents[0], "chunks": chunks, "count": len(chunks),
                 "total_chunks": total, "mode": payload.mode,
+                "retrieval": {"candidate_count":before, "final_count":len(chunks),
+                              "rerank_configured":callable(getattr(current, "rerank_model_func", None)),
+                              "rerank_scored":any("rerank_score" in c for c in chunks)},
                 "coverage": "selected_excerpts", "is_full_document": False}
 
     @router.post(

@@ -787,7 +787,7 @@ def test_document_opening_is_in_source_order_and_not_claimed_complete():
 def test_document_search_passes_doc_id_to_vector_recall():
     class Vectors:
         async def query_by_doc_id(self, query, doc_id, top_k):
-            assert (query, doc_id, top_k) == ('actual question', 'target', 24)
+            assert (query, doc_id, top_k) == ('actual question', 'target', 40)
             return [{'id': 'hit', 'full_doc_id': 'target'},
                     {'id': 'wrong', 'full_doc_id': 'other'}]
     db = _FakeDB(query_results=[
@@ -802,7 +802,7 @@ def test_document_search_passes_doc_id_to_vector_recall():
         'doc_id': 'target', 'mode': 'search', 'query': 'actual question'})
     assert result.status_code == 200
     assert result.json()['chunks'][0]['doc_id'] == 'target'
-    assert db.query_calls[1][1] == ['default', 'target', ['hit'], 12]
+    assert db.query_calls[1][1] == ['default', 'target', ['hit'], 40]
 
 
 def test_document_search_without_scoped_support_does_not_search_globally():
@@ -858,7 +858,7 @@ def test_milvus_document_search_uses_membership_before_recall():
     class Vectors:
         async def query_by_ids(self, query, chunk_ids, top_k):
             assert chunk_ids == ['owned-1', 'owned-2']
-            assert top_k == 24
+            assert top_k == 40
             return [{'id': 'owned-2'}, {'id': 'foreign'}]
     db = _FakeDB(query_results=[
         [{'doc_id': 'target'}],
@@ -872,7 +872,7 @@ def test_milvus_document_search_uses_membership_before_recall():
     result = client.post('/agent/document_read', json={'doc_id': 'target', 'query': 'question'})
     assert result.status_code == 200
     assert db.query_calls[1][1] == ['default', 'target']
-    assert db.query_calls[2][1] == ['default', 'target', ['owned-2'], 12]
+    assert db.query_calls[2][1] == ['default', 'target', ['owned-2'], 40]
 
 
 def test_milvus_id_filter_is_sent_to_search():

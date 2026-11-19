@@ -2895,6 +2895,7 @@ async def process_chunks_unified(
         return []
 
     origin_count = len(unique_chunks)
+    query_param.retrieval_stats["chunks_before_rerank"] = origin_count
 
     # 1. Apply reranking if enabled and query is provided
     if query_param.enable_rerank and query and unique_chunks:
@@ -2973,6 +2974,8 @@ async def process_chunks_unified(
         chunk_with_id["id"] = f"DC{i + 1}"
         final_chunks.append(chunk_with_id)
 
+    query_param.retrieval_stats["final_chunks"] = len(final_chunks)
+    query_param.retrieval_stats["rerank_scored"] = any("rerank_score" in c for c in final_chunks)
     return final_chunks
 
 

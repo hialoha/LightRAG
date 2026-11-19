@@ -159,6 +159,11 @@ class QueryRequest(BaseModel):
         description="Number of top items to retrieve. Represents entities in 'local' mode and relationships in 'global' mode.",
     )
 
+    candidate_top_k: Optional[int] = Field(
+        default=None, ge=1, le=100,
+        description="Vector candidates before reranking, independent of final chunk_top_k.",
+    )
+
     chunk_top_k: Optional[int] = Field(
         ge=1,
         default=None,
@@ -2471,6 +2476,12 @@ def create_query_routes(
                         exclude_none=True
                     )
                 response = _format_query_data_for_agent(response)
+                response.setdefault("metadata", {})["retrieval"] = {
+                    **param.retrieval_stats,
+                    "candidate_top_k_requested":param.candidate_top_k or param.chunk_top_k,
+                    "rerank_requested":param.enable_rerank,
+                    "rerank_configured":callable(getattr(current_rag, "rerank_model_func", None)),
+                }
                 return QueryDataResponse(**response)
             else:
                 # Handle unexpected response format
